@@ -12,8 +12,7 @@ type FailWith    = ByteString -> IO ()
 data Request     = Request RequestBody ReplyWith FailWith
 
 connect :: String -> Text -> Text -> Text -> IO Connection
-connect host vhost user password =
-  openConnection host vhost user password
+connect = openConnection
 
 respondTo :: Connection -> String -> (Request -> IO ()) -> IO ()
 respondTo conn queueName callback = do
