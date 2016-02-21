@@ -3,8 +3,8 @@
 import qualified Network.Freddy as Freddy
 import Data.ByteString.Lazy.Char8 (ByteString)
 
-processMessage :: ByteString -> Either ByteString ByteString
-processMessage rawRequest = Right rawRequest
+processMessage :: Freddy.Request -> IO ()
+processMessage (Freddy.Request body replyWith failWith) = replyWith body
 
 main = do
   fConnection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"

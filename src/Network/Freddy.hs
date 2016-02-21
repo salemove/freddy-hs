@@ -1,32 +1,41 @@
 {-# OPTIONS -XOverloadedStrings #-}
-module Network.Freddy (connect, respondTo) where
+module Network.Freddy (connect, respondTo, Request (..)) where
 
 import Network.AMQP
 import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
-import Network.Freddy.Result
+
+type RequestBody = ByteString
+type ReplyBody   = ByteString
+type ReplyWith   = ByteString -> IO ()
+type FailWith    = ByteString -> IO ()
+data Request     = Request RequestBody ReplyWith FailWith
 
 connect :: String -> Text -> Text -> Text -> IO Connection
 connect host vhost user password =
   openConnection host vhost user password
 
-respondTo :: Connection -> String -> (ByteString -> Either ByteString ByteString) -> IO ConsumerTag
+respondTo :: Connection -> String -> (Request -> IO ()) -> IO ()
 respondTo conn queueName callback = do
   chan <- openChannel conn
-
   declareQueue chan newQueue {queueName = pack queueName}
-
   consumeMsgs chan (pack queueName) NoAck (replyCallback callback chan)
+  return ()
 
-replyCallback :: (ByteString -> Either ByteString ByteString) -> Channel -> (Message, Envelope) -> IO ()
+replyCallback :: (Request -> t) -> Channel -> (Message, t1) -> t
 replyCallback userCallback channel (msg, env) = do
-  let (resType, body) = processRequest userCallback msg
+  let requestBody = msgBody msg
+  let replyWith = sendReply msg channel "success"
+  let failWith = sendReply msg channel "error"
+  userCallback $ Request requestBody replyWith failWith
 
-  case buildReply msg resType body of
+sendReply :: Message -> Channel -> Text -> ReplyBody -> IO ()
+sendReply originalMsg channel replyType body =
+  case buildReply originalMsg replyType body of
     Just (queueName, reply) -> (publishMsg channel "" queueName reply)
     Nothing -> putStrLn $ "Could not reply"
 
-buildReply :: Message -> Result -> ByteString -> Maybe (Text, Message)
+buildReply :: Message -> Text -> ByteString -> Maybe (Text, Message)
 buildReply originalMsg resType body = do
   queueName <- msgReplyTo originalMsg
 
@@ -34,15 +43,7 @@ buildReply originalMsg resType body = do
     msgBody          = body,
     msgCorrelationID = msgCorrelationID originalMsg,
     msgDeliveryMode  = Just NonPersistent,
-    msgType          = Just $ pack $ show resType
+    msgType          = Just resType
   }
 
   Just $ (queueName, reply)
-
-processRequest :: (ByteString -> Either ByteString ByteString) -> Message -> (Result, ByteString)
-processRequest userCallback msg = do
-  let requestBody = msgBody msg
-
-  case userCallback requestBody of
-    Right r -> (Success, r)
-    Left r -> (Error, r)
