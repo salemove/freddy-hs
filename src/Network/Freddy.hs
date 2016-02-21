@@ -7,10 +7,13 @@ import Data.ByteString.Lazy.Char8 (ByteString)
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
 
 type RequestBody = ByteString
-type ReplyBody   = ByteString
 type ReplyWith   = ByteString -> IO ()
 type FailWith    = ByteString -> IO ()
 data Request     = Request RequestBody ReplyWith FailWith
+
+type ReplyBody   = ByteString
+type Queue       = Text
+data Reply       = Reply Queue Message
 
 connect :: String -> Text -> Text -> Text -> IO Connection
 connect = openConnection
@@ -32,18 +35,18 @@ replyCallback userCallback channel (msg, env) = do
 sendReply :: Message -> Channel -> ResultType -> ReplyBody -> IO ()
 sendReply originalMsg channel resType body =
   case buildReply originalMsg resType body of
-    Just (queueName, reply) -> (publishMsg channel "" queueName reply)
+    Just (Reply queueName message) -> (publishMsg channel "" queueName message)
     Nothing -> putStrLn $ "Could not reply"
 
-buildReply :: Message -> ResultType -> ByteString -> Maybe (Text, Message)
+buildReply :: Message -> ResultType -> ReplyBody -> Maybe Reply
 buildReply originalMsg resType body = do
   queueName <- msgReplyTo originalMsg
 
-  let reply = newMsg {
+  let msg = newMsg {
     msgBody          = body,
     msgCorrelationID = msgCorrelationID originalMsg,
     msgDeliveryMode  = Just NonPersistent,
     msgType          = Just $ pack $ serializeResultType resType
   }
 
-  Just $ (queueName, reply)
+  Just $ Reply queueName msg
