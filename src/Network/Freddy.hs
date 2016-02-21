@@ -4,6 +4,7 @@ module Network.Freddy (connect, respondTo, Request (..)) where
 import Network.AMQP
 import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
+import Network.Freddy.ResultType (ResultType (..), serializeResultType)
 
 type RequestBody = ByteString
 type ReplyBody   = ByteString
@@ -24,17 +25,17 @@ respondTo conn queueName callback = do
 replyCallback :: (Request -> t) -> Channel -> (Message, t1) -> t
 replyCallback userCallback channel (msg, env) = do
   let requestBody = msgBody msg
-  let replyWith = sendReply msg channel "success"
-  let failWith = sendReply msg channel "error"
+  let replyWith = sendReply msg channel Success
+  let failWith = sendReply msg channel Error
   userCallback $ Request requestBody replyWith failWith
 
-sendReply :: Message -> Channel -> Text -> ReplyBody -> IO ()
-sendReply originalMsg channel replyType body =
-  case buildReply originalMsg replyType body of
+sendReply :: Message -> Channel -> ResultType -> ReplyBody -> IO ()
+sendReply originalMsg channel resType body =
+  case buildReply originalMsg resType body of
     Just (queueName, reply) -> (publishMsg channel "" queueName reply)
     Nothing -> putStrLn $ "Could not reply"
 
-buildReply :: Message -> Text -> ByteString -> Maybe (Text, Message)
+buildReply :: Message -> ResultType -> ByteString -> Maybe (Text, Message)
 buildReply originalMsg resType body = do
   queueName <- msgReplyTo originalMsg
 
@@ -42,7 +43,7 @@ buildReply originalMsg resType body = do
     msgBody          = body,
     msgCorrelationID = msgCorrelationID originalMsg,
     msgDeliveryMode  = Just NonPersistent,
-    msgType          = Just resType
+    msgType          = Just $ pack $ serializeResultType resType
   }
 
   Just $ (queueName, reply)
