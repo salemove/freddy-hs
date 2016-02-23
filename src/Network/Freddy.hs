@@ -1,10 +1,14 @@
 {-# OPTIONS -XOverloadedStrings #-}
-module Network.Freddy (connect, respondTo, Request (..)) where
+module Network.Freddy (connect, respondTo, Request (..), deliverWithResponse) where
 
 import Network.AMQP
 import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
+--import Control.Concurrent
+--import Control.Concurrent.STM
+import qualified Control.Concurrent.CML as CML
+import Control.Monad.IO.Class
 
 type RequestBody = ByteString
 type ReplyWith   = ByteString -> IO ()
@@ -15,14 +19,33 @@ type ReplyBody   = ByteString
 type Queue       = Text
 data Reply       = Reply Queue Message
 
-connect :: String -> Text -> Text -> Text -> IO Connection
-connect = openConnection
+type QueueName = String
+type Responder = QueueName -> (Request -> IO ())
 
-respondTo :: Connection -> String -> (Request -> IO ()) -> IO ()
-respondTo conn queueName callback = do
-  chan <- openChannel conn
-  declareQueue chan newQueue {queueName = pack queueName}
-  consumeMsgs chan (pack queueName) NoAck (replyCallback callback chan)
+--connect :: String -> Text -> Text -> Text -> IO (QueueName -> (Request -> IO ()) -> IO ())
+connect host vhost user pass = do
+  connection <- openConnection host vhost user pass
+  channel <- openChannel connection
+
+  eventChannel <- CML.channel
+
+  (responseQueueName, _, _) <- declareQueue channel newQueue {queueName = ""}
+  consumeMsgs channel responseQueueName NoAck (responseCallback eventChannel)
+
+  let publicRespondTo = respondTo channel
+  let publicDeliverWithResponse = deliverWithResponse channel responseQueueName eventChannel
+
+  return (publicRespondTo, publicDeliverWithResponse)
+
+--responseCallback :: CML.Channel Message -> (Message, Envelope) -> IO ()
+responseCallback :: CML.Channel Message -> (Message, Envelope) -> IO ()
+responseCallback eventChannel (msg, env) =
+  liftIO (CML.spawn $ CML.sync $ (CML.transmit eventChannel msg)) >> return ()
+
+respondTo :: Channel -> QueueName -> (Request -> IO ()) -> IO ()
+respondTo channel queueName callback = do
+  declareQueue channel newQueue {queueName = pack queueName}
+  consumeMsgs channel (pack queueName) NoAck (replyCallback callback channel)
   return ()
 
 replyCallback :: (Request -> t) -> Channel -> (Message, t1) -> t
@@ -50,3 +73,25 @@ buildReply originalMsg resType body = do
   }
 
   Just $ Reply queueName msg
+
+--deliverWithResponse :: Channel -> Text -> String -> ByteString -> (ByteString -> t1) -> t2
+deliverWithResponse channel responseQueueName eventChannel queueName body callback = do
+  let msg = newMsg {
+    msgBody          = body,
+    msgCorrelationID = Just "correlation-id",
+    msgDeliveryMode  = Just NonPersistent,
+    msgType          = Just $ "request",
+    msgReplyTo       = Just $ responseQueueName
+  }
+
+  publishMsg channel "" queueName msg
+
+  blabla eventChannel callback
+
+  return ()
+
+blabla :: CML.Channel Message -> (ByteString -> IO ()) -> IO ()
+blabla eventChannel callback = do
+  msg <- CML.sync $ CML.receive eventChannel (const True)
+  callback $ msgBody msg
+  return ()
