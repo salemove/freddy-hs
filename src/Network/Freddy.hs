@@ -1,52 +1,125 @@
 {-# OPTIONS -XOverloadedStrings #-}
-module Network.Freddy (connect, respondTo, Request (..)) where
+module Network.Freddy (connect, Request (..)) where
 
-import Network.AMQP
-import Data.Text (Text, pack)
+import qualified Network.AMQP as AMQP
+import Data.Text (Text)
 import Data.ByteString.Lazy.Char8 (ByteString)
+import qualified Control.Concurrent.BroadcastChan as BC
+import Control.Concurrent (forkIO)
+import qualified Data.UUID as UUID
+import Data.UUID (UUID)
+import System.Random (randomIO)
+
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
 
 type RequestBody = ByteString
-type ReplyWith   = ByteString -> IO ()
-type FailWith    = ByteString -> IO ()
-data Request     = Request RequestBody ReplyWith FailWith
+type ResponseBody = ByteString
+type ReplyBody = ByteString
+type QueueName = Text
+type CorrelationId = Text
 
-type ReplyBody   = ByteString
-type Queue       = Text
-data Reply       = Reply Queue Message
+type ReplyWith = ByteString -> IO ()
+type FailWith  = ByteString -> IO ()
 
-connect :: String -> Text -> Text -> Text -> IO Connection
-connect = openConnection
+type RespondTo = QueueName -> (Request -> IO ()) -> IO ()
+type DeliverWithResponse = QueueName -> RequestBody -> IO ResponseBody
+type Handlers = IO (RespondTo, DeliverWithResponse)
 
-respondTo :: Connection -> String -> (Request -> IO ()) -> IO ()
-respondTo conn queueName callback = do
-  chan <- openChannel conn
-  declareQueue chan newQueue {queueName = pack queueName}
-  consumeMsgs chan (pack queueName) NoAck (replyCallback callback chan)
+type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQP.Message
+type ResponseChannelListener = BC.BroadcastChan BC.Out AMQP.Message
+
+data Request = Request RequestBody ReplyWith FailWith
+data Reply = Reply QueueName AMQP.Message
+
+connect :: String -> Text -> Text -> Text -> Handlers
+connect host vhost user pass = do
+  connection <- AMQP.openConnection host vhost user pass
+  channel <- AMQP.openChannel connection
+
+  eventChannel <- BC.newBroadcastChan
+  responseChannelListener <- BC.newBChanListener eventChannel
+
+  (responseQueueName, _, _) <- AMQP.declareQueue channel AMQP.newQueue {
+    AMQP.queueName = ""
+  }
+  AMQP.consumeMsgs channel responseQueueName AMQP.NoAck $ responseCallback eventChannel
+
+  let publicRespondTo = respondTo channel
+  let publicDeliverWithResponse = deliverWithResponse channel responseQueueName responseChannelListener
+
+  return (publicRespondTo, publicDeliverWithResponse)
+
+responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> IO ()
+responseCallback eventChannel (msg, env) =
+  BC.writeBChan eventChannel msg
+
+respondTo :: AMQP.Channel -> QueueName -> (Request -> IO ()) -> IO ()
+respondTo channel queueName callback = do
+  AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
+  AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
   return ()
 
-replyCallback :: (Request -> t) -> Channel -> (Message, t1) -> t
+replyCallback :: (Request -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
 replyCallback userCallback channel (msg, env) = do
-  let requestBody = msgBody msg
+  let requestBody = AMQP.msgBody msg
   let replyWith = sendReply msg channel Success
   let failWith = sendReply msg channel Error
   userCallback $ Request requestBody replyWith failWith
 
-sendReply :: Message -> Channel -> ResultType -> ReplyBody -> IO ()
+sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> ReplyBody -> IO ()
 sendReply originalMsg channel resType body =
   case buildReply originalMsg resType body of
-    Just (Reply queueName message) -> (publishMsg channel "" queueName message)
+    Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
     Nothing -> putStrLn $ "Could not reply"
 
-buildReply :: Message -> ResultType -> ReplyBody -> Maybe Reply
+buildReply :: AMQP.Message -> ResultType -> ReplyBody -> Maybe Reply
 buildReply originalMsg resType body = do
-  queueName <- msgReplyTo originalMsg
+  queueName <- AMQP.msgReplyTo originalMsg
 
-  let msg = newMsg {
-    msgBody          = body,
-    msgCorrelationID = msgCorrelationID originalMsg,
-    msgDeliveryMode  = Just NonPersistent,
-    msgType          = Just $ pack $ serializeResultType resType
+  let msg = AMQP.newMsg {
+    AMQP.msgBody          = body,
+    AMQP.msgCorrelationID = AMQP.msgCorrelationID originalMsg,
+    AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
+    AMQP.msgType          = Just $ serializeResultType resType
   }
 
   Just $ Reply queueName msg
+
+deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> QueueName -> RequestBody -> IO ResponseBody
+deliverWithResponse channel responseQueueName responseChannelListener queueName body = do
+  correlationId <- generateCorrelationId
+
+  let msg = AMQP.newMsg {
+    AMQP.msgBody          = body,
+    AMQP.msgCorrelationID = Just $ correlationId,
+    AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
+    AMQP.msgType          = Just $ "request",
+    AMQP.msgReplyTo       = Just $ responseQueueName
+  }
+
+  AMQP.publishMsg channel "" queueName msg
+
+  waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId
+
+matchingCorrelationId :: CorrelationId -> AMQP.Message -> Bool
+matchingCorrelationId correlationId msg =
+  case AMQP.msgCorrelationID msg of
+    Just msgCorrelationId -> msgCorrelationId == correlationId
+    Nothing -> False
+
+waitForResponse :: ResponseChannelListener -> CorrelationId -> (AMQP.Message -> Bool) -> IO ResponseBody
+waitForResponse eventChannelListener correlationId predicate = do
+  msg <- BC.readBChan eventChannelListener
+
+  if predicate msg then
+    return $ AMQP.msgBody msg
+  else
+    waitForResponse eventChannelListener correlationId predicate
+
+generateCorrelationId :: IO CorrelationId
+generateCorrelationId = do
+  uuid <- newUUID
+  return $ UUID.toText uuid
+
+newUUID :: IO UUID
+newUUID = randomIO

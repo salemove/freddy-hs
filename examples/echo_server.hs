@@ -7,9 +7,9 @@ processMessage :: Freddy.Request -> IO ()
 processMessage (Freddy.Request body replyWith failWith) = replyWith body
 
 main = do
-  fConnection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+  (respondTo, _) <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
 
-  Freddy.respondTo fConnection "EchoServer" processMessage
+  respondTo "EchoServer" processMessage
 
   putStrLn "Service started!"
   putStrLn ""
