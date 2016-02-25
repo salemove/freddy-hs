@@ -1,5 +1,5 @@
 {-# OPTIONS -XOverloadedStrings #-}
-module Network.Freddy (connect, Request (..)) where
+module Network.Freddy (connect, Request (..), Error (..)) where
 
 import qualified Network.AMQP as AMQP
 import Data.Text (Text)
@@ -9,6 +9,7 @@ import Control.Concurrent (forkIO)
 import qualified Data.UUID as UUID
 import Data.UUID (UUID)
 import System.Random (randomIO)
+import System.Timeout (timeout)
 
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
 
@@ -22,11 +23,14 @@ type ReplyWith = ByteString -> IO ()
 type FailWith  = ByteString -> IO ()
 
 type RespondTo = QueueName -> (Request -> IO ()) -> IO ()
-type DeliverWithResponse = QueueName -> RequestBody -> IO ResponseBody
+type DeliverWithResponse = QueueName -> RequestBody -> IO Response
 type Handlers = IO (RespondTo, DeliverWithResponse)
 
 type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQP.Message
 type ResponseChannelListener = BC.BroadcastChan BC.Out AMQP.Message
+
+data Error = InvalidRequest | TimeoutError deriving (Show, Eq)
+type Response = Either Error ResponseBody
 
 data Request = Request RequestBody ReplyWith FailWith
 data Reply = Reply QueueName AMQP.Message
@@ -85,7 +89,7 @@ buildReply originalMsg resType body = do
 
   Just $ Reply queueName msg
 
-deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> QueueName -> RequestBody -> IO ResponseBody
+deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> QueueName -> RequestBody -> IO Response
 deliverWithResponse channel responseQueueName responseChannelListener queueName body = do
   correlationId <- generateCorrelationId
 
@@ -99,7 +103,11 @@ deliverWithResponse channel responseQueueName responseChannelListener queueName 
 
   AMQP.publishMsg channel "" queueName msg
 
-  waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId
+  responseBody <- timeout (3 * 1000 * 1000) (waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId)
+
+  case responseBody of
+    Just body -> return $ Right body
+    Nothing -> return $ Left $ TimeoutError
 
 matchingCorrelationId :: CorrelationId -> AMQP.Message -> Bool
 matchingCorrelationId correlationId msg =
