@@ -1,4 +1,4 @@
-{-# OPTIONS -XOverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 module SpecHelper where
   import System.Random (randomIO)
   import Data.UUID (UUID, toText)
@@ -15,7 +15,7 @@ module SpecHelper where
     uuid <- newUUID
     return $ toText uuid
 
-  echoResponder (Freddy.Request body replyWith failWith) = do
+  echoResponder (Freddy.Request body replyWith failWith) =
     replyWith body
 
   delayedResponder (Freddy.Request body replyWith failWith) = do

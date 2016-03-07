@@ -1,4 +1,4 @@
-{-# OPTIONS -XOverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Network.Freddy (connect, Request (..), Error (..)) where
 
 import qualified Network.AMQP as AMQP
@@ -82,7 +82,7 @@ sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> ReplyBody -> IO ()
 sendReply originalMsg channel resType body =
   case buildReply originalMsg resType body of
     Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
-    Nothing -> putStrLn $ "Could not reply"
+    Nothing -> putStrLn "Could not reply"
 
 buildReply :: AMQP.Message -> ResultType -> ReplyBody -> Maybe Reply
 buildReply originalMsg resType body = do
@@ -103,10 +103,10 @@ deliverWithResponse channel responseQueueName responseChannelListener queueName 
 
   let msg = AMQP.newMsg {
     AMQP.msgBody          = body,
-    AMQP.msgCorrelationID = Just $ correlationId,
+    AMQP.msgCorrelationID = Just correlationId,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
-    AMQP.msgType          = Just $ "request",
-    AMQP.msgReplyTo       = Just $ responseQueueName
+    AMQP.msgType          = Just "request",
+    AMQP.msgReplyTo       = Just responseQueueName
   }
 
   AMQP.publishMsg' channel "" queueName True msg

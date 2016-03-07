@@ -1,4 +1,4 @@
-{-# OPTIONS -XOverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import qualified Network.Freddy as Freddy
 import Data.ByteString.Lazy.Char8 (ByteString)

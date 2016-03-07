@@ -1,4 +1,4 @@
-{-# OPTIONS -XOverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 
 import qualified Network.Freddy as Freddy

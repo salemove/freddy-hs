@@ -1,4 +1,4 @@
-{-# OPTIONS -XOverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Network.FreddySpec where
 
 import Test.Hspec
@@ -17,7 +17,7 @@ import SpecHelper (
   )
 
 spec :: Spec
-spec = do
+spec =
   describe "Freddy" $ do
     it "can respond to messages" $ do
       (respondTo, deliverWithResponse) <- connect
