@@ -26,14 +26,16 @@ type RespondTo = QueueName -> (Request -> IO ()) -> IO ()
 type DeliverWithResponse = QueueName -> RequestBody -> IO Response
 type Handlers = IO (RespondTo, DeliverWithResponse)
 
-type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQP.Message
-type ResponseChannelListener = BC.BroadcastChan BC.Out AMQP.Message
+type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
+type ResponseChannelListener = BC.BroadcastChan BC.Out AMQPResponse
 
 data Error = InvalidRequest | TimeoutError deriving (Show, Eq)
 type Response = Either Error ResponseBody
 
 data Request = Request RequestBody ReplyWith FailWith
 data Reply = Reply QueueName AMQP.Message
+
+type AMQPResponse = Either AMQP.PublishError AMQP.Message
 
 connect :: String -> Text -> Text -> Text -> Handlers
 connect host vhost user pass = do
@@ -48,14 +50,20 @@ connect host vhost user pass = do
   }
   AMQP.consumeMsgs channel responseQueueName AMQP.NoAck $ responseCallback eventChannel
 
+  AMQP.addReturnListener channel (returnCallback eventChannel)
+
   let publicRespondTo = respondTo channel
   let publicDeliverWithResponse = deliverWithResponse channel responseQueueName responseChannelListener
 
   return (publicRespondTo, publicDeliverWithResponse)
 
+returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
+returnCallback eventChannel (msg, error) =
+  BC.writeBChan eventChannel (Left error)
+
 responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> IO ()
 responseCallback eventChannel (msg, env) =
-  BC.writeBChan eventChannel msg
+  BC.writeBChan eventChannel (Right msg)
 
 respondTo :: AMQP.Channel -> QueueName -> (Request -> IO ()) -> IO ()
 respondTo channel queueName callback = do
@@ -101,13 +109,14 @@ deliverWithResponse channel responseQueueName responseChannelListener queueName 
     AMQP.msgReplyTo       = Just $ responseQueueName
   }
 
-  AMQP.publishMsg channel "" queueName msg
+  AMQP.publishMsg' channel "" queueName True msg
 
   responseBody <- timeout (3 * 1000 * 1000) (waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId)
 
   case responseBody of
-    Just body -> return $ Right body
-    Nothing -> return $ Left $ TimeoutError
+    Just (Right body) -> return $ Right $ AMQP.msgBody body
+    Just (Left error) -> return $ Left InvalidRequest
+    Nothing -> return $ Left TimeoutError
 
 matchingCorrelationId :: CorrelationId -> AMQP.Message -> Bool
 matchingCorrelationId correlationId msg =
@@ -115,14 +124,19 @@ matchingCorrelationId correlationId msg =
     Just msgCorrelationId -> msgCorrelationId == correlationId
     Nothing -> False
 
-waitForResponse :: ResponseChannelListener -> CorrelationId -> (AMQP.Message -> Bool) -> IO ResponseBody
+waitForResponse :: ResponseChannelListener -> CorrelationId -> (AMQP.Message -> Bool) -> IO AMQPResponse
 waitForResponse eventChannelListener correlationId predicate = do
-  msg <- BC.readBChan eventChannelListener
+  amqpResponse <- BC.readBChan eventChannelListener
 
-  if predicate msg then
-    return $ AMQP.msgBody msg
-  else
-    waitForResponse eventChannelListener correlationId predicate
+  case amqpResponse of
+    Right msg ->
+      if predicate msg then
+        return amqpResponse
+      else
+        waitForResponse eventChannelListener correlationId predicate
+    Left error ->
+      -- TODO: Check routing key. This is needed when having multiple threads.
+      return amqpResponse
 
 generateCorrelationId :: IO CorrelationId
 generateCorrelationId = do

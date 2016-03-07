@@ -47,3 +47,12 @@ spec = do
       let response = deliverWithResponse queueName requestBody
 
       response `shouldReturn` Left Freddy.TimeoutError
+
+    it "returns a invalid request error when queue does not exist" $ do
+      (respondTo, deliverWithResponse) <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+      queueName <- randomQueueName
+
+      let requestBody = "msg body"
+      let response = deliverWithResponse queueName requestBody
+
+      response `shouldReturn` Left Freddy.InvalidRequest
