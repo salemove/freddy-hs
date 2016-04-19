@@ -12,6 +12,7 @@ import System.Random (randomIO)
 import System.Timeout (timeout)
 
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
+import qualified Network.Freddy.Request as DWP
 
 type RequestBody = ByteString
 type ResponseBody = ByteString
@@ -23,7 +24,7 @@ type ReplyWith = ByteString -> IO ()
 type FailWith  = ByteString -> IO ()
 
 type RespondTo = QueueName -> (Request -> IO ()) -> IO ()
-type DeliverWithResponse = QueueName -> RequestBody -> IO Response
+type DeliverWithResponse = DWP.Request -> IO Response
 type Handlers = IO (RespondTo, DeliverWithResponse)
 
 type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
@@ -97,21 +98,23 @@ buildReply originalMsg resType body = do
 
   Just $ Reply queueName msg
 
-deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> QueueName -> RequestBody -> IO Response
-deliverWithResponse channel responseQueueName responseChannelListener queueName body = do
+deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> DWP.Request -> IO Response
+deliverWithResponse channel responseQueueName responseChannelListener request = do
   correlationId <- generateCorrelationId
 
   let msg = AMQP.newMsg {
-    AMQP.msgBody          = body,
+    AMQP.msgBody          = DWP.body request,
     AMQP.msgCorrelationID = Just correlationId,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
     AMQP.msgType          = Just "request",
     AMQP.msgReplyTo       = Just responseQueueName
   }
 
-  AMQP.publishMsg' channel "" queueName True msg
+  AMQP.publishMsg' channel "" (DWP.queueName request) True msg
+  let timeoutInMicroseconds = (DWP.timeoutInMs request) * 1000
 
-  responseBody <- timeout (3 * 1000 * 1000) (waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId)
+  responseBody <- timeout timeoutInMicroseconds $
+    waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId
 
   case responseBody of
     Just (Right body) -> return $ Right $ AMQP.msgBody body

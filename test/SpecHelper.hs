@@ -18,8 +18,8 @@ module SpecHelper where
   echoResponder (Freddy.Request body replyWith failWith) =
     replyWith body
 
-  delayedResponder (Freddy.Request body replyWith failWith) = do
-    threadDelay $ 4 * 1000 * 1000 -- 4 seconds
+  delayedResponder delayInMs (Freddy.Request body replyWith failWith) = do
+    threadDelay $ delayInMs * 1000
     replyWith body
 
   connect = Freddy.connect "127.0.0.1" "/" "guest" "guest"

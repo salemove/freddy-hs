@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 import qualified Network.Freddy as Freddy
+import qualified Network.Freddy.Request as R
 import GHC.Generics (Generic)
 import Data.Aeson (ToJSON, encode)
 
@@ -15,7 +16,10 @@ echo body = do
   let request = EchoRequest { message = body }
   (_, deliverWithResponse) <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
 
-  responseBody <- deliverWithResponse "EchoServer" (encode request)
+  responseBody <- deliverWithResponse R.newReq {
+    R.queueName = "EchoServer",
+    R.body = encode request
+  }
   putStrLn $ "Got response: " ++ show responseBody
 
 main = do
