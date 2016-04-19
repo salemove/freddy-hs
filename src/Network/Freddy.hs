@@ -17,13 +17,14 @@ import qualified Network.Freddy.Request as DWP
 type RequestBody = ByteString
 type ResponseBody = ByteString
 type ReplyBody = ByteString
-type QueueName = Text
+type ResponderQueueName = Text
+type ResponseQueueName = Text
 type CorrelationId = Text
 
 type ReplyWith = ByteString -> IO ()
 type FailWith  = ByteString -> IO ()
 
-type RespondTo = QueueName -> (Request -> IO ()) -> IO ()
+type RespondTo = ResponderQueueName -> (Request -> IO ()) -> IO ()
 type DeliverWithResponse = DWP.Request -> IO Response
 type Handlers = IO (RespondTo, DeliverWithResponse)
 
@@ -34,7 +35,7 @@ data Error = InvalidRequest | TimeoutError deriving (Show, Eq)
 type Response = Either Error ResponseBody
 
 data Request = Request RequestBody ReplyWith FailWith
-data Reply = Reply QueueName AMQP.Message
+data Reply = Reply ResponseQueueName AMQP.Message
 
 type AMQPResponse = Either AMQP.PublishError AMQP.Message
 
@@ -66,7 +67,7 @@ responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> I
 responseCallback eventChannel (msg, env) =
   BC.writeBChan eventChannel (Right msg)
 
-respondTo :: AMQP.Channel -> QueueName -> (Request -> IO ()) -> IO ()
+respondTo :: AMQP.Channel -> ResponderQueueName -> (Request -> IO ()) -> IO ()
 respondTo channel queueName callback = do
   AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
   AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
@@ -98,7 +99,7 @@ buildReply originalMsg resType body = do
 
   Just $ Reply queueName msg
 
-deliverWithResponse :: AMQP.Channel -> QueueName -> ResponseChannelListener -> DWP.Request -> IO Response
+deliverWithResponse :: AMQP.Channel -> ResponseQueueName -> ResponseChannelListener -> DWP.Request -> IO Response
 deliverWithResponse channel responseQueueName responseChannelListener request = do
   correlationId <- generateCorrelationId
 
