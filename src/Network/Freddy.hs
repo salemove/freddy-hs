@@ -5,7 +5,6 @@ import qualified Network.AMQP as AMQP
 import Data.Text (Text)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Control.Concurrent.BroadcastChan as BC
-import Control.Concurrent (forkIO)
 import qualified Data.UUID as UUID
 import Data.UUID (UUID)
 import System.Random (randomIO)
