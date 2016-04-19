@@ -16,7 +16,7 @@ instance Default Request where
   def = Request {
     queueName = "localhost",
     body = BS.empty,
-    timeoutInMs = 3
+    timeoutInMs = 3000
   }
 
 newReq :: Request
