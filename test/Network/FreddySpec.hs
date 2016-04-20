@@ -8,7 +8,9 @@ import SpecHelper (
   randomQueueName,
   echoResponder,
   requestBody,
-  withConnection
+  withConnection,
+  createQueue,
+  processRequest
   )
 
 spec :: Spec
@@ -35,3 +37,11 @@ spec = around withConnection $
 
       response `shouldReturn` Left Freddy.InvalidRequest
 
+    it "sends and forgets a message" $ \connection -> do
+      queueName <- randomQueueName
+      createQueue connection queueName
+
+      Freddy.deliver connection (buildRequest queueName)
+
+      let gotRequest = processRequest connection queueName
+      gotRequest `shouldReturn` True

@@ -5,6 +5,7 @@ module Network.Freddy (
   Connection,
   respondTo,
   deliverWithResponse,
+  deliver,
   cancelConsumer,
   Consumer,
   Delivery (..),
@@ -97,6 +98,16 @@ deliverWithResponse connection request = do
     Just (Right body) -> return . Right . AMQP.msgBody $ body
     Just (Left error) -> return . Left $ InvalidRequest
     Nothing -> return $ Left TimeoutError
+
+deliver :: Connection -> Request.Request -> IO ()
+deliver connection request = do
+  let msg = AMQP.newMsg {
+    AMQP.msgBody         = Request.body request,
+    AMQP.msgDeliveryMode = Just AMQP.NonPersistent,
+    AMQP.msgExpiration   = Request.expirationInMs request
+  }
+
+  AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
 
 respondTo :: Connection -> QueueName -> (Delivery -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
