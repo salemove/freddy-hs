@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Freddy.Request (newReq, queueName, body, timeoutInMs, Request) where
+module Network.Freddy.Request (Request (..), newReq) where
 
 import Data.Text (Text)
 import Data.Default (Default, def)
@@ -9,14 +9,16 @@ import qualified Data.ByteString.Lazy.Char8 as BS
 data Request = Request {
   queueName :: Text,
   body :: ByteString,
-  timeoutInMs :: Int
+  timeoutInMs :: Int,
+  deleteOnTimeout :: Bool
 } deriving (Show)
 
 instance Default Request where
   def = Request {
     queueName = "localhost",
     body = BS.empty,
-    timeoutInMs = 3000
+    timeoutInMs = 3000,
+    deleteOnTimeout = True
   }
 
 newReq :: Request
