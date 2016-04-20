@@ -23,41 +23,42 @@ import SpecHelper (
 spec :: Spec
 spec = around withConnection $
   describe "Freddy" $ do
+    let buildRequest queueName = R.newReq {
+      R.queueName = queueName,
+      R.body = requestBody
+    }
+
     it "responds to a message" $ \connection -> do
       queueName <- randomQueueName
 
       Freddy.respondTo connection queueName echoResponder
 
-      let response = Freddy.deliverWithResponse connection R.newReq {
-        R.queueName = queueName,
-        R.body = requestBody
-      }
+      let response = Freddy.deliverWithResponse connection (buildRequest queueName)
 
       response `shouldReturn` Right requestBody
 
     it "returns invalid request error when queue does not exist" $ \connection -> do
       queueName <- randomQueueName
 
-      let response = Freddy.deliverWithResponse connection R.newReq {
-        R.queueName = queueName,
-        R.body = requestBody
-      }
+      let response = Freddy.deliverWithResponse connection (buildRequest queueName)
 
       response `shouldReturn` Left Freddy.InvalidRequest
 
     context "on timeout" $ do
       context "when deleteOnTimeout is set to false" $ do
+        let buildRequest queueName = R.newReq {
+          R.queueName = queueName,
+          R.body = requestBody,
+          R.timeoutInMs = 10,
+          R.deleteOnTimeout = False
+        }
+
         it "returns Freddy.TimeoutError" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName
 
-          let response = Freddy.deliverWithResponse connection R.newReq {
-            R.queueName = queueName,
-            R.body = requestBody,
-            R.timeoutInMs = 10,
-            R.deleteOnTimeout = False
-          }
+          let response = Freddy.deliverWithResponse connection $ buildRequest queueName
 
           response `shouldReturn` Left Freddy.TimeoutError
 
@@ -66,29 +67,26 @@ spec = around withConnection $
 
           createQueue connection queueName
 
-          Freddy.deliverWithResponse connection R.newReq {
-            R.queueName = queueName,
-            R.body = requestBody,
-            R.timeoutInMs = 10,
-            R.deleteOnTimeout = False
-          }
+          Freddy.deliverWithResponse connection $ buildRequest queueName
 
           let gotRequest = processRequest connection queueName
 
           gotRequest `shouldReturn` True
 
       context "when deleteOnTimeout is set to true" $ do
+        let buildRequest queueName = R.newReq {
+          R.queueName = queueName,
+          R.body = requestBody,
+          R.timeoutInMs = 10,
+          R.deleteOnTimeout = True
+        }
+
         it "returns Freddy.TimeoutError" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName
 
-          let response = Freddy.deliverWithResponse connection R.newReq {
-            R.queueName = queueName,
-            R.body = requestBody,
-            R.timeoutInMs = 10,
-            R.deleteOnTimeout = True
-          }
+          let response = Freddy.deliverWithResponse connection $ buildRequest queueName
 
           response `shouldReturn` Left Freddy.TimeoutError
 
@@ -97,12 +95,7 @@ spec = around withConnection $
 
           createQueue connection queueName
 
-          Freddy.deliverWithResponse connection R.newReq {
-            R.queueName = queueName,
-            R.body = requestBody,
-            R.timeoutInMs = 10,
-            R.deleteOnTimeout = True
-          }
+          Freddy.deliverWithResponse connection $ buildRequest queueName
 
           let gotRequest = processRequest connection queueName
 
