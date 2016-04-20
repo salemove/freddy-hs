@@ -7,7 +7,7 @@ module Network.Freddy (
   deliverWithResponse,
   cancelConsumer,
   Consumer,
-  Request (..),
+  Delivery (..),
   Error (..)
 ) where
 
@@ -18,26 +18,23 @@ import qualified Control.Concurrent.BroadcastChan as BC
 import System.Timeout (timeout)
 
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
-import qualified Network.Freddy.Request as DWP
+import qualified Network.Freddy.Request as Request
 import Network.Freddy.CorrelationIdGenerator (CorrelationId, generateCorrelationId)
 
-type RequestBody = ByteString
-type ResponseBody = ByteString
-type ReplyBody = ByteString
-type ResponderQueueName = Text
-type ResponseQueueName = Text
+type Payload = ByteString
+type QueueName = Text
 
-type ReplyWith = ByteString -> IO ()
-type FailWith  = ByteString -> IO ()
+type ReplyWith = Payload -> IO ()
+type FailWith  = Payload -> IO ()
 
 type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
 type ResponseChannelListener = BC.BroadcastChan BC.Out AMQPResponse
 
 data Error = InvalidRequest | TimeoutError deriving (Show, Eq)
-type Response = Either Error ResponseBody
+type Response = Either Error Payload
 
-data Request = Request RequestBody ReplyWith FailWith
-data Reply = Reply ResponseQueueName AMQP.Message
+data Delivery = Delivery Payload ReplyWith FailWith
+data Reply = Reply QueueName AMQP.Message
 
 type AMQPResponse = Either AMQP.PublishError AMQP.Message
 
@@ -78,22 +75,22 @@ connect host vhost user pass = do
 disconnect :: Connection -> IO ()
 disconnect = AMQP.closeConnection . amqpConnection
 
-deliverWithResponse :: Connection -> DWP.Request -> IO Response
+deliverWithResponse :: Connection -> Request.Request -> IO Response
 deliverWithResponse connection request = do
   correlationId <- generateCorrelationId
 
   let msg = AMQP.newMsg {
-    AMQP.msgBody          = DWP.body request,
+    AMQP.msgBody          = Request.body request,
     AMQP.msgCorrelationID = Just correlationId,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
     AMQP.msgType          = Just "request",
     AMQP.msgReplyTo       = Just $ responseQueueName connection,
-    AMQP.msgExpiration    = DWP.expirationInMs request
+    AMQP.msgExpiration    = Request.expirationInMs request
   }
 
-  AMQP.publishMsg' (amqpChannel connection) "" (DWP.queueName request) True msg
+  AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
 
-  responseBody <- timeout (DWP.timeoutInMicroseconds request) $
+  responseBody <- timeout (Request.timeoutInMicroseconds request) $
     waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
 
   case responseBody of
@@ -101,7 +98,7 @@ deliverWithResponse connection request = do
     Just (Left error) -> return . Left $ InvalidRequest
     Nothing -> return $ Left TimeoutError
 
-respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO Consumer
+respondTo :: Connection -> QueueName -> (Delivery -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
   let channel = amqpChannel connection
   AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
@@ -110,7 +107,7 @@ respondTo connection queueName callback = do
 
 cancelConsumer :: Consumer -> IO ()
 cancelConsumer consumer =
-  AMQP.cancelConsumer (consumerChannel consumer) (consumerTag consumer)
+  AMQP.cancelConsumer (consumerChannel consumer) $ consumerTag consumer
 
 returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
 returnCallback eventChannel (msg, error) =
@@ -120,20 +117,20 @@ responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> I
 responseCallback eventChannel (msg, env) =
   BC.writeBChan eventChannel (Right msg)
 
-replyCallback :: (Request -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
+replyCallback :: (Delivery -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
 replyCallback userCallback channel (msg, env) = do
   let requestBody = AMQP.msgBody msg
   let replyWith = sendReply msg channel Success
   let failWith = sendReply msg channel Error
-  userCallback $ Request requestBody replyWith failWith
+  userCallback $ Delivery requestBody replyWith failWith
 
-sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> ReplyBody -> IO ()
+sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> Payload -> IO ()
 sendReply originalMsg channel resType body =
   case buildReply originalMsg resType body of
     Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
     Nothing -> putStrLn "Could not reply"
 
-buildReply :: AMQP.Message -> ResultType -> ReplyBody -> Maybe Reply
+buildReply :: AMQP.Message -> ResultType -> Payload -> Maybe Reply
 buildReply originalMsg resType body = do
   queueName <- AMQP.msgReplyTo originalMsg
 
