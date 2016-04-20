@@ -7,6 +7,7 @@ import Data.UUID (UUID, toText)
 import Data.Text (Text)
 import Control.Concurrent (threadDelay)
 import qualified Network.Freddy as Freddy
+import qualified Network.Freddy.Request as R
 import SpecHelper (
   newUUID,
   randomQueueName,
@@ -25,7 +26,10 @@ spec =
 
       respondTo queueName echoResponder
 
-      let response = deliverWithResponse queueName requestBody
+      let response = deliverWithResponse R.newReq {
+        R.queueName = queueName,
+        R.body = requestBody
+      }
 
       response `shouldReturn` Right requestBody
 
@@ -33,9 +37,13 @@ spec =
       (respondTo, deliverWithResponse) <- connect
       queueName <- randomQueueName
 
-      respondTo queueName delayedResponder
+      respondTo queueName $ delayedResponder 20
 
-      let response = deliverWithResponse queueName requestBody
+      let response = deliverWithResponse R.newReq {
+        R.queueName = queueName,
+        R.body = requestBody,
+        R.timeoutInMs = 10
+      }
 
       response `shouldReturn` Left Freddy.TimeoutError
 
@@ -43,6 +51,9 @@ spec =
       (_, deliverWithResponse) <- connect
       queueName <- randomQueueName
 
-      let response = deliverWithResponse queueName requestBody
+      let response = deliverWithResponse R.newReq {
+        R.queueName = queueName,
+        R.body = requestBody
+      }
 
       response `shouldReturn` Left Freddy.InvalidRequest
