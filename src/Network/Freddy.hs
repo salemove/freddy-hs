@@ -81,11 +81,6 @@ connect host vhost user pass = do
 
 deliverWithResponse :: Connection -> DWP.Request -> IO Response
 deliverWithResponse connection request = do
-  let timeoutInMs = DWP.timeoutInMs request
-  let expiration = if DWP.deleteOnTimeout request
-                     then Just . pack . show $ timeoutInMs
-                     else Nothing
-
   correlationId <- generateCorrelationId
 
   let msg = AMQP.newMsg {
@@ -94,12 +89,12 @@ deliverWithResponse connection request = do
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
     AMQP.msgType          = Just "request",
     AMQP.msgReplyTo       = Just $ responseQueueName connection,
-    AMQP.msgExpiration    = expiration
+    AMQP.msgExpiration    = DWP.expirationInMs request
   }
 
   AMQP.publishMsg' (amqpChannel connection) "" (DWP.queueName request) True msg
 
-  responseBody <- timeout (timeoutInMs * 1000) $
+  responseBody <- timeout (DWP.timeoutInMicroseconds request) $
     waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
 
   case responseBody of

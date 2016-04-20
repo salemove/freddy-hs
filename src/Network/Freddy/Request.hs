@@ -1,7 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Freddy.Request (Request (..), newReq) where
+module Network.Freddy.Request (
+  Request (..),
+  timeoutInMicroseconds,
+  expirationInMs,
+  newReq
+) where
 
-import Data.Text (Text)
+import Data.Text (Text, pack)
 import Data.Default (Default, def)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as BS
@@ -20,6 +25,15 @@ instance Default Request where
     timeoutInMs = 3000,
     deleteOnTimeout = True
   }
+
+timeoutInMicroseconds :: Request -> Int
+timeoutInMicroseconds = (*) 1000 . timeoutInMs
+
+expirationInMs :: Request -> Maybe Text
+expirationInMs request =
+  if deleteOnTimeout request
+    then Just . pack . show . timeoutInMs $ request
+    else Nothing
 
 newReq :: Request
 newReq = def
