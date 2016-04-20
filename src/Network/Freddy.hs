@@ -86,7 +86,7 @@ deliverWithResponse :: Connection -> DWP.Request -> IO Response
 deliverWithResponse connection request = do
   let timeoutInMs = DWP.timeoutInMs request
   let expiration = if DWP.deleteOnTimeout request
-                     then Just $ pack $ show timeoutInMs
+                     then Just . pack . show $ timeoutInMs
                      else Nothing
 
   correlationId <- generateCorrelationId
@@ -106,8 +106,8 @@ deliverWithResponse connection request = do
     waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
 
   case responseBody of
-    Just (Right body) -> return $ Right $ AMQP.msgBody body
-    Just (Left error) -> return $ Left InvalidRequest
+    Just (Right body) -> return . Right . AMQP.msgBody $ body
+    Just (Left error) -> return . Left $ InvalidRequest
     Nothing -> return $ Left TimeoutError
 
 respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO Consumer
@@ -150,7 +150,7 @@ buildReply originalMsg resType body = do
     AMQP.msgBody          = body,
     AMQP.msgCorrelationID = AMQP.msgCorrelationID originalMsg,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
-    AMQP.msgType          = Just $ serializeResultType resType
+    AMQP.msgType          = Just . serializeResultType $ resType
   }
 
   Just $ Reply queueName msg
