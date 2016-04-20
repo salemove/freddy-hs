@@ -29,11 +29,6 @@ type ResponseQueueName = Text
 type ReplyWith = ByteString -> IO ()
 type FailWith  = ByteString -> IO ()
 
-type RespondTo = ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
-type DeliverWithResponse = DWP.Request -> IO Response
-type CancelConsumer = AMQP.ConsumerTag -> IO ()
-type Handlers = IO (RespondTo, DeliverWithResponse, CancelConsumer)
-
 type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
 type ResponseChannelListener = BC.BroadcastChan BC.Out AMQPResponse
 
