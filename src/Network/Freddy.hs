@@ -76,48 +76,6 @@ connect host vhost user pass = do
     responseChannelListener = responseChannelListener
   }
 
-cancelConsumer connection = AMQP.cancelConsumer $ amqpChannel connection
-
-returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
-returnCallback eventChannel (msg, error) =
-  BC.writeBChan eventChannel (Left error)
-
-responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> IO ()
-responseCallback eventChannel (msg, env) =
-  BC.writeBChan eventChannel (Right msg)
-
-respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
-respondTo connection queueName callback = do
-  let channel = amqpChannel connection
-  AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
-  AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
-
-replyCallback :: (Request -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
-replyCallback userCallback channel (msg, env) = do
-  let requestBody = AMQP.msgBody msg
-  let replyWith = sendReply msg channel Success
-  let failWith = sendReply msg channel Error
-  userCallback $ Request requestBody replyWith failWith
-
-sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> ReplyBody -> IO ()
-sendReply originalMsg channel resType body =
-  case buildReply originalMsg resType body of
-    Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
-    Nothing -> putStrLn "Could not reply"
-
-buildReply :: AMQP.Message -> ResultType -> ReplyBody -> Maybe Reply
-buildReply originalMsg resType body = do
-  queueName <- AMQP.msgReplyTo originalMsg
-
-  let msg = AMQP.newMsg {
-    AMQP.msgBody          = body,
-    AMQP.msgCorrelationID = AMQP.msgCorrelationID originalMsg,
-    AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
-    AMQP.msgType          = Just $ serializeResultType resType
-  }
-
-  Just $ Reply queueName msg
-
 deliverWithResponse :: Connection -> DWP.Request -> IO Response
 deliverWithResponse connection request = do
   let timeoutInMs = DWP.timeoutInMs request
@@ -145,6 +103,49 @@ deliverWithResponse connection request = do
     Just (Right body) -> return $ Right $ AMQP.msgBody body
     Just (Left error) -> return $ Left InvalidRequest
     Nothing -> return $ Left TimeoutError
+
+respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
+respondTo connection queueName callback = do
+  let channel = amqpChannel connection
+  AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
+  AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
+
+cancelConsumer :: Connection -> AMQP.ConsumerTag -> IO ()
+cancelConsumer connection = AMQP.cancelConsumer $ amqpChannel connection
+
+returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
+returnCallback eventChannel (msg, error) =
+  BC.writeBChan eventChannel (Left error)
+
+responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> IO ()
+responseCallback eventChannel (msg, env) =
+  BC.writeBChan eventChannel (Right msg)
+
+replyCallback :: (Request -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
+replyCallback userCallback channel (msg, env) = do
+  let requestBody = AMQP.msgBody msg
+  let replyWith = sendReply msg channel Success
+  let failWith = sendReply msg channel Error
+  userCallback $ Request requestBody replyWith failWith
+
+sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> ReplyBody -> IO ()
+sendReply originalMsg channel resType body =
+  case buildReply originalMsg resType body of
+    Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
+    Nothing -> putStrLn "Could not reply"
+
+buildReply :: AMQP.Message -> ResultType -> ReplyBody -> Maybe Reply
+buildReply originalMsg resType body = do
+  queueName <- AMQP.msgReplyTo originalMsg
+
+  let msg = AMQP.newMsg {
+    AMQP.msgBody          = body,
+    AMQP.msgCorrelationID = AMQP.msgCorrelationID originalMsg,
+    AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
+    AMQP.msgType          = Just $ serializeResultType resType
+  }
+
+  Just $ Reply queueName msg
 
 matchingCorrelationId :: CorrelationId -> AMQP.Message -> Bool
 matchingCorrelationId correlationId msg =
