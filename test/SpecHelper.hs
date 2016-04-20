@@ -29,7 +29,7 @@ module SpecHelper where
 
   createQueue connection queueName = do
     consumer <- Freddy.respondTo connection queueName echoResponder
-    Freddy.cancelConsumer connection consumer
+    Freddy.cancelConsumer consumer
 
   processRequest connection queueName = do
     gotRequestStore <- newEmptyMVar

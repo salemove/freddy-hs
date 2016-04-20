@@ -2,6 +2,7 @@
 module Network.Freddy (
   connect,
   Connection,
+  Consumer,
   Request (..),
   Error (..),
   respondTo,
@@ -54,6 +55,11 @@ data Connection = Connection {
   responseChannelListener :: ResponseChannelListener
 }
 
+data Consumer = Consumer {
+  consumerTag :: AMQP.ConsumerTag,
+  consumerChannel :: AMQP.Channel
+}
+
 connect :: String -> Text -> Text -> Text -> IO Connection
 connect host vhost user pass = do
   connection <- AMQP.openConnection host vhost user pass
@@ -104,14 +110,16 @@ deliverWithResponse connection request = do
     Just (Left error) -> return $ Left InvalidRequest
     Nothing -> return $ Left TimeoutError
 
-respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
+respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
   let channel = amqpChannel connection
   AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
-  AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
+  tag <- AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
+  return Consumer { consumerChannel = channel, consumerTag = tag }
 
-cancelConsumer :: Connection -> AMQP.ConsumerTag -> IO ()
-cancelConsumer connection = AMQP.cancelConsumer $ amqpChannel connection
+cancelConsumer :: Consumer -> IO ()
+cancelConsumer consumer =
+  AMQP.cancelConsumer (consumerChannel consumer) (consumerTag consumer)
 
 returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
 returnCallback eventChannel (msg, error) =
