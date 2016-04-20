@@ -17,14 +17,14 @@ import SpecHelper (
   connect,
   requestBody,
   createQueue,
-  processRequest
+  processRequest,
+  withConnection
   )
 
 spec :: Spec
-spec =
+spec = around withConnection $
   describe "Freddy" $ do
-    it "responds to a message" $ do
-      connection <- connect
+    it "responds to a message" $ \connection -> do
       queueName <- randomQueueName
 
       Freddy.respondTo connection queueName echoResponder
@@ -36,8 +36,7 @@ spec =
 
       response `shouldReturn` Right requestBody
 
-    it "returns invalid request error when queue does not exist" $ do
-      connection <- connect
+    it "returns invalid request error when queue does not exist" $ \connection -> do
       queueName <- randomQueueName
 
       let response = Freddy.deliverWithResponse connection R.newReq {
@@ -49,8 +48,7 @@ spec =
 
     context "on timeout" $ do
       context "when deleteOnTimeout is set to false" $ do
-        it "returns Freddy.TimeoutError" $ do
-          connection <- connect
+        it "returns Freddy.TimeoutError" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName
@@ -64,8 +62,7 @@ spec =
 
           response `shouldReturn` Left Freddy.TimeoutError
 
-        it "processes the message after timeout error" $ do
-          connection <- connect
+        it "processes the message after timeout error" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName
@@ -82,8 +79,7 @@ spec =
           gotRequest `shouldReturn` True
 
       context "when deleteOnTimeout is set to true" $ do
-        it "returns Freddy.TimeoutError" $ do
-          connection <- connect
+        it "returns Freddy.TimeoutError" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName
@@ -97,8 +93,7 @@ spec =
 
           response `shouldReturn` Left Freddy.TimeoutError
 
-        it "does not process the message after timeout" $ do
-          connection <- connect
+        it "does not process the message after timeout" $ \connection -> do
           queueName <- randomQueueName
 
           createQueue connection queueName

@@ -1,13 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.Freddy (
   connect,
+  disconnect,
   Connection,
-  Consumer,
-  Request (..),
-  Error (..),
   respondTo,
   deliverWithResponse,
-  cancelConsumer
+  cancelConsumer,
+  Consumer,
+  Request (..),
+  Error (..)
 ) where
 
 import qualified Network.AMQP as AMQP
@@ -73,6 +74,9 @@ connect host vhost user pass = do
     responseQueueName = responseQueueName,
     responseChannelListener = responseChannelListener
   }
+
+disconnect :: Connection -> IO ()
+disconnect = AMQP.closeConnection . amqpConnection
 
 deliverWithResponse :: Connection -> DWP.Request -> IO Response
 deliverWithResponse connection request = do

@@ -8,6 +8,11 @@ module SpecHelper where
   import Data.ByteString.Lazy.Char8 (ByteString)
   import System.Timeout (timeout)
 
+  withConnection example = do
+    connection <- connect
+    example connection
+    Freddy.disconnect connection
+
   newUUID :: IO UUID
   newUUID = randomIO
 
