@@ -24,12 +24,12 @@ spec :: Spec
 spec =
   describe "Freddy" $ do
     it "responds to a message" $ do
-      (respondTo, deliverWithResponse, _) <- connect
+      connection <- connect
       queueName <- randomQueueName
 
-      respondTo queueName echoResponder
+      Freddy.respondTo connection queueName echoResponder
 
-      let response = deliverWithResponse R.newReq {
+      let response = Freddy.deliverWithResponse connection R.newReq {
         R.queueName = queueName,
         R.body = requestBody
       }
@@ -37,10 +37,10 @@ spec =
       response `shouldReturn` Right requestBody
 
     it "returns invalid request error when queue does not exist" $ do
-      (_, deliverWithResponse, _) <- connect
+      connection <- connect
       queueName <- randomQueueName
 
-      let response = deliverWithResponse R.newReq {
+      let response = Freddy.deliverWithResponse connection R.newReq {
         R.queueName = queueName,
         R.body = requestBody
       }
@@ -50,12 +50,12 @@ spec =
     context "on timeout" $ do
       context "when deleteOnTimeout is set to false" $ do
         it "returns Freddy.TimeoutError" $ do
-          (respondTo, deliverWithResponse, cancelConsumer) <- connect
+          connection <- connect
           queueName <- randomQueueName
 
-          createQueue queueName respondTo cancelConsumer
+          createQueue connection queueName
 
-          let response = deliverWithResponse R.newReq {
+          let response = Freddy.deliverWithResponse connection R.newReq {
             R.queueName = queueName,
             R.body = requestBody,
             R.timeoutInMs = 10,
@@ -65,30 +65,30 @@ spec =
           response `shouldReturn` Left Freddy.TimeoutError
 
         it "processes the message after timeout error" $ do
-          (respondTo, deliverWithResponse, cancelConsumer) <- connect
+          connection <- connect
           queueName <- randomQueueName
 
-          createQueue queueName respondTo cancelConsumer
+          createQueue connection queueName
 
-          deliverWithResponse R.newReq {
+          Freddy.deliverWithResponse connection R.newReq {
             R.queueName = queueName,
             R.body = requestBody,
             R.timeoutInMs = 10,
             R.deleteOnTimeout = False
           }
 
-          let gotRequest = processRequest queueName respondTo
+          let gotRequest = processRequest connection queueName
 
           gotRequest `shouldReturn` True
 
       context "when deleteOnTimeout is set to true" $ do
         it "returns Freddy.TimeoutError" $ do
-          (respondTo, deliverWithResponse, cancelConsumer) <- connect
+          connection <- connect
           queueName <- randomQueueName
 
-          createQueue queueName respondTo cancelConsumer
+          createQueue connection queueName
 
-          let response = deliverWithResponse R.newReq {
+          let response = Freddy.deliverWithResponse connection R.newReq {
             R.queueName = queueName,
             R.body = requestBody,
             R.timeoutInMs = 10,
@@ -98,18 +98,18 @@ spec =
           response `shouldReturn` Left Freddy.TimeoutError
 
         it "does not process the message after timeout" $ do
-          (respondTo, deliverWithResponse, cancelConsumer) <- connect
+          connection <- connect
           queueName <- randomQueueName
 
-          createQueue queueName respondTo cancelConsumer
+          createQueue connection queueName
 
-          deliverWithResponse R.newReq {
+          Freddy.deliverWithResponse connection R.newReq {
             R.queueName = queueName,
             R.body = requestBody,
             R.timeoutInMs = 10,
             R.deleteOnTimeout = True
           }
 
-          let gotRequest = processRequest queueName respondTo
+          let gotRequest = processRequest connection queueName
 
           gotRequest `shouldReturn` False

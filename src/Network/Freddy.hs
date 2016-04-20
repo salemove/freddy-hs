@@ -1,5 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Network.Freddy (connect, Request (..), Error (..)) where
+module Network.Freddy (
+  connect,
+  Connection,
+  Request (..),
+  Error (..),
+  respondTo,
+  deliverWithResponse,
+  cancelConsumer
+) where
 
 import qualified Network.AMQP as AMQP
 import Data.Text (Text, pack)
@@ -39,7 +47,14 @@ data Reply = Reply ResponseQueueName AMQP.Message
 
 type AMQPResponse = Either AMQP.PublishError AMQP.Message
 
-connect :: String -> Text -> Text -> Text -> Handlers
+data Connection = Connection {
+  amqpConnection :: AMQP.Connection,
+  amqpChannel :: AMQP.Channel,
+  responseQueueName :: Text,
+  responseChannelListener :: ResponseChannelListener
+}
+
+connect :: String -> Text -> Text -> Text -> IO Connection
 connect host vhost user pass = do
   connection <- AMQP.openConnection host vhost user pass
   channel <- AMQP.openChannel connection
@@ -54,13 +69,14 @@ connect host vhost user pass = do
 
   AMQP.addReturnListener channel (returnCallback eventChannel)
 
-  let publicRespondTo = respondTo channel
-  let publicDeliverWithResponse = deliverWithResponse channel responseQueueName responseChannelListener
-  let publicCancelConsumer = cancelConsumer channel
+  return $ Connection {
+    amqpConnection = connection,
+    amqpChannel = channel,
+    responseQueueName = responseQueueName,
+    responseChannelListener = responseChannelListener
+  }
 
-  return (publicRespondTo, publicDeliverWithResponse, publicCancelConsumer)
-
-cancelConsumer = AMQP.cancelConsumer
+cancelConsumer connection = AMQP.cancelConsumer $ amqpChannel connection
 
 returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
 returnCallback eventChannel (msg, error) =
@@ -70,8 +86,9 @@ responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> I
 responseCallback eventChannel (msg, env) =
   BC.writeBChan eventChannel (Right msg)
 
-respondTo :: AMQP.Channel -> ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
-respondTo channel queueName callback = do
+respondTo :: Connection -> ResponderQueueName -> (Request -> IO ()) -> IO AMQP.ConsumerTag
+respondTo connection queueName callback = do
+  let channel = amqpChannel connection
   AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
   AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
 
@@ -101,8 +118,8 @@ buildReply originalMsg resType body = do
 
   Just $ Reply queueName msg
 
-deliverWithResponse :: AMQP.Channel -> ResponseQueueName -> ResponseChannelListener -> DWP.Request -> IO Response
-deliverWithResponse channel responseQueueName responseChannelListener request = do
+deliverWithResponse :: Connection -> DWP.Request -> IO Response
+deliverWithResponse connection request = do
   let timeoutInMs = DWP.timeoutInMs request
   let expiration = if DWP.deleteOnTimeout request
                      then Just $ pack $ show timeoutInMs
@@ -115,14 +132,14 @@ deliverWithResponse channel responseQueueName responseChannelListener request = 
     AMQP.msgCorrelationID = Just correlationId,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
     AMQP.msgType          = Just "request",
-    AMQP.msgReplyTo       = Just responseQueueName,
+    AMQP.msgReplyTo       = Just $ responseQueueName connection,
     AMQP.msgExpiration    = expiration
   }
 
-  AMQP.publishMsg' channel "" (DWP.queueName request) True msg
+  AMQP.publishMsg' (amqpChannel connection) "" (DWP.queueName request) True msg
 
   responseBody <- timeout (timeoutInMs * 1000) $
-    waitForResponse responseChannelListener correlationId $ matchingCorrelationId correlationId
+    waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
 
   case responseBody of
     Just (Right body) -> return $ Right $ AMQP.msgBody body

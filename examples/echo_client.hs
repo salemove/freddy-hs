@@ -14,9 +14,9 @@ instance ToJSON EchoRequest
 
 echo body = do
   let request = EchoRequest { message = body }
-  (_, deliverWithResponse) <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+  connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
 
-  responseBody <- deliverWithResponse R.newReq {
+  responseBody <- Freddy.deliverWithResponse connection R.newReq {
     R.queueName = "EchoServer",
     R.body = encode request
   }

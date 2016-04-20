@@ -27,13 +27,13 @@ module SpecHelper where
     putMVar gotResult True
     replyWith body
 
-  createQueue queueName respondTo cancelConsumer = do
-    consumer <- respondTo queueName echoResponder
-    cancelConsumer consumer
+  createQueue connection queueName = do
+    consumer <- Freddy.respondTo connection queueName echoResponder
+    Freddy.cancelConsumer connection consumer
 
-  processRequest queueName respondTo = do
+  processRequest connection queueName = do
     gotRequestStore <- newEmptyMVar
-    respondTo queueName $ storeResponder gotRequestStore
+    Freddy.respondTo connection queueName $ storeResponder gotRequestStore
     result <- timeout (20 * 1000) (takeMVar gotRequestStore)
     case result of
       Just True -> return True
