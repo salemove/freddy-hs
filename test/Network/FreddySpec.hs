@@ -10,7 +10,6 @@ import System.Timeout (timeout)
 import qualified Network.Freddy as Freddy
 import qualified Network.Freddy.Request as R
 import SpecHelper (
-  newUUID,
   randomQueueName,
   echoResponder,
   delayedResponder,

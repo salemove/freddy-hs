@@ -13,12 +13,9 @@ module SpecHelper where
     example connection
     Freddy.disconnect connection
 
-  newUUID :: IO UUID
-  newUUID = randomIO
-
   randomQueueName :: IO Text
   randomQueueName = do
-    uuid <- newUUID
+    uuid <- (randomIO :: IO UUID)
     return $ toText uuid
 
   echoResponder (Freddy.Request body replyWith _) =
