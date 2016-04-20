@@ -14,20 +14,17 @@ import qualified Network.AMQP as AMQP
 import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Control.Concurrent.BroadcastChan as BC
-import qualified Data.UUID as UUID
-import Data.UUID (UUID)
-import System.Random (randomIO)
 import System.Timeout (timeout)
 
 import Network.Freddy.ResultType (ResultType (..), serializeResultType)
 import qualified Network.Freddy.Request as DWP
+import Network.Freddy.CorrelationIdGenerator (CorrelationId, generateCorrelationId)
 
 type RequestBody = ByteString
 type ResponseBody = ByteString
 type ReplyBody = ByteString
 type ResponderQueueName = Text
 type ResponseQueueName = Text
-type CorrelationId = Text
 
 type ReplyWith = ByteString -> IO ()
 type FailWith  = ByteString -> IO ()
@@ -174,11 +171,3 @@ waitForResponse eventChannelListener correlationId predicate = do
     Left error ->
       -- TODO: Check routing key. This is needed when having multiple threads.
       return amqpResponse
-
-generateCorrelationId :: IO CorrelationId
-generateCorrelationId = do
-  uuid <- newUUID
-  return $ UUID.toText uuid
-
-newUUID :: IO UUID
-newUUID = randomIO
