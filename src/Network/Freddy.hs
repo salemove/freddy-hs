@@ -4,6 +4,7 @@ module Network.Freddy (
   disconnect,
   Connection,
   respondTo,
+  tapInto,
   deliverWithResponse,
   deliver,
   cancelConsumer,
@@ -90,6 +91,7 @@ deliverWithResponse connection request = do
   }
 
   AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
+  AMQP.publishMsg (amqpChannel connection) topicExchange (Request.queueName request) msg
 
   responseBody <- timeout (Request.timeoutInMicroseconds request) $
     waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
@@ -107,13 +109,34 @@ deliver connection request = do
     AMQP.msgExpiration   = Request.expirationInMs request
   }
 
-  AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
+  AMQP.publishMsg (amqpChannel connection) "" (Request.queueName request) msg
+  AMQP.publishMsg (amqpChannel connection) topicExchange (Request.queueName request) msg
 
 respondTo :: Connection -> QueueName -> (Delivery -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
   let channel = amqpChannel connection
   AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
   tag <- AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
+  return Consumer { consumerChannel = channel, consumerTag = tag }
+
+tapInto :: Connection -> QueueName -> (Payload -> IO ()) -> IO Consumer
+tapInto connection queueName callback = do
+  let channel = amqpChannel connection
+
+  AMQP.declareQueue channel AMQP.newQueue {
+    AMQP.queueName = queueName,
+    AMQP.queueExclusive = True
+  }
+  AMQP.declareExchange channel AMQP.newExchange {
+    AMQP.exchangeName = topicExchange,
+    AMQP.exchangeType = "topic",
+    AMQP.exchangeDurable = False
+  }
+  AMQP.bindQueue channel "" topicExchange queueName
+
+  let consumer = callback . AMQP.msgBody .fst
+  tag <- AMQP.consumeMsgs channel queueName AMQP.NoAck consumer
+
   return Consumer { consumerChannel = channel, consumerTag = tag }
 
 cancelConsumer :: Consumer -> IO ()
@@ -159,6 +182,9 @@ matchingCorrelationId correlationId msg =
   case AMQP.msgCorrelationID msg of
     Just msgCorrelationId -> msgCorrelationId == correlationId
     Nothing -> False
+
+topicExchange :: Text
+topicExchange = "freddy-topic"
 
 waitForResponse :: ResponseChannelListener -> CorrelationId -> (AMQP.Message -> Bool) -> IO AMQPResponse
 waitForResponse eventChannelListener correlationId predicate = do

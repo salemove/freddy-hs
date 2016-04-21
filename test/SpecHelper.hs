@@ -36,10 +36,19 @@ module SpecHelper where
   processRequest connection queueName = do
     gotRequestStore <- newEmptyMVar
     Freddy.respondTo connection queueName $ storeResponder gotRequestStore
-    result <- timeout (20 * 1000) (takeMVar gotRequestStore)
+    result <- waitFromStore gotRequestStore
     case result of
       Just True -> return True
       Nothing -> return False
+
+  tapIntoOnce connection queueName = do
+    receivedMsgStore <- newEmptyMVar
+    Freddy.tapInto connection queueName $ \body ->
+      putMVar receivedMsgStore body
+    return receivedMsgStore
+
+  waitFromStore store =
+    timeout (100 * 1000) $ takeMVar store
 
   connect = Freddy.connect "127.0.0.1" "/" "guest" "guest"
 
