@@ -18,14 +18,14 @@ module SpecHelper where
     uuid <- (randomIO :: IO UUID)
     return $ toText uuid
 
-  echoResponder (Freddy.Request body replyWith _) =
+  echoResponder (Freddy.Delivery body replyWith _) =
     replyWith body
 
-  delayedResponder delayInMs (Freddy.Request body replyWith _) = do
+  delayedResponder delayInMs (Freddy.Delivery body replyWith _) = do
     threadDelay $ delayInMs * 1000
     replyWith body
 
-  storeResponder gotResult (Freddy.Request body replyWith _) = do
+  storeResponder gotResult (Freddy.Delivery body replyWith _) = do
     putMVar gotResult True
     replyWith body
 
