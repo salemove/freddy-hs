@@ -18,8 +18,8 @@ import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Control.Concurrent.BroadcastChan as BC
 import System.Timeout (timeout)
-
-import Network.Freddy.ResultType (ResultType (..), serializeResultType)
+import Network.Freddy.ResultType (ResultType)
+import qualified Network.Freddy.ResultType as ResultType
 import qualified Network.Freddy.Request as Request
 import Network.Freddy.CorrelationIdGenerator (CorrelationId, generateCorrelationId)
 
@@ -32,7 +32,7 @@ type FailWith  = Payload -> IO ()
 type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
 type ResponseChannelListener = BC.BroadcastChan BC.Out AMQPResponse
 
-data Error = InvalidRequest | TimeoutError deriving (Show, Eq)
+data Error = InvalidRequest Payload | TimeoutError deriving (Show, Eq)
 type Response = Either Error Payload
 
 data Delivery = Delivery Payload ReplyWith FailWith
@@ -93,13 +93,25 @@ deliverWithResponse connection request = do
   AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
   AMQP.publishMsg (amqpChannel connection) topicExchange (Request.queueName request) msg
 
-  responseBody <- timeout (Request.timeoutInMicroseconds request) $
+  amqpResponse <- timeout (Request.timeoutInMicroseconds request) $
     waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
 
-  case responseBody of
-    Just (Right body) -> return . Right . AMQP.msgBody $ body
-    Just (Left error) -> return . Left $ InvalidRequest
+  case amqpResponse of
+    Just (Right msg) -> return $ createResponse msg
+    Just (Left error) -> return . Left . InvalidRequest $ "AMQP Error"
     Nothing -> return $ Left TimeoutError
+
+createResponse :: AMQP.Message -> Either Error Payload
+createResponse msg = do
+  let msgBody = AMQP.msgBody msg
+
+  case AMQP.msgType msg of
+    Just msgType ->
+      if (ResultType.fromText msgType) == ResultType.Success then
+        Right msgBody
+      else
+        Left . InvalidRequest $ msgBody
+    _ -> Left . InvalidRequest $ "No message type"
 
 deliver :: Connection -> Request.Request -> IO ()
 deliver connection request = do
@@ -154,8 +166,8 @@ responseCallback eventChannel (msg, env) =
 replyCallback :: (Delivery -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
 replyCallback userCallback channel (msg, env) = do
   let requestBody = AMQP.msgBody msg
-  let replyWith = sendReply msg channel Success
-  let failWith = sendReply msg channel Error
+  let replyWith = sendReply msg channel ResultType.Success
+  let failWith = sendReply msg channel ResultType.Error
   userCallback $ Delivery requestBody replyWith failWith
 
 sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> Payload -> IO ()
@@ -172,7 +184,7 @@ buildReply originalMsg resType body = do
     AMQP.msgBody          = body,
     AMQP.msgCorrelationID = AMQP.msgCorrelationID originalMsg,
     AMQP.msgDeliveryMode  = Just AMQP.NonPersistent,
-    AMQP.msgType          = Just . serializeResultType $ resType
+    AMQP.msgType          = Just . ResultType.serializeResultType $ resType
   }
 
   Just $ Reply queueName msg

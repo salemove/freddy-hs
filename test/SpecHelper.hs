@@ -21,6 +21,9 @@ module SpecHelper where
   echoResponder (Freddy.Delivery body replyWith _) =
     replyWith body
 
+  errorResponder (Freddy.Delivery body _ failWith) =
+    failWith body
+
   delayedResponder delayInMs (Freddy.Delivery body replyWith _) = do
     threadDelay $ delayInMs * 1000
     replyWith body
