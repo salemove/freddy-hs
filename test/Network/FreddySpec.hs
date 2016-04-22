@@ -4,13 +4,16 @@ module Network.FreddySpec where
 import Test.Hspec
 import qualified Network.Freddy as Freddy
 import qualified Network.Freddy.Request as R
+import qualified Data.Text as Text
 import SpecHelper (
   randomQueueName,
   echoResponder,
   requestBody,
   withConnection,
   createQueue,
-  processRequest
+  processRequest,
+  waitFromStore,
+  tapIntoOnce
   )
 
 spec :: Spec
@@ -45,3 +48,23 @@ spec = around withConnection $
 
       let gotRequest = processRequest connection queueName
       gotRequest `shouldReturn` True
+
+    it "taps into a queue" $ \connection -> do
+      queueName <- randomQueueName
+
+      receivedMsgStore <- tapIntoOnce connection queueName
+      Freddy.deliver connection $ buildRequest queueName
+
+      let receivedMsg = waitFromStore receivedMsgStore
+      receivedMsg `shouldReturn` Just requestBody
+
+    it "taps into a wildcard queue" $ \connection -> do
+      baseQueueName <- randomQueueName
+      let wildQueueName = Text.append baseQueueName ".*"
+      let specificQueueName = Text.append baseQueueName ".sub"
+
+      receivedMsgStore <- tapIntoOnce connection wildQueueName
+      Freddy.deliver connection $ buildRequest specificQueueName
+
+      let receivedMsg = waitFromStore receivedMsgStore
+      receivedMsg `shouldReturn` Just requestBody
