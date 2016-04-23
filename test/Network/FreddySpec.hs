@@ -49,7 +49,7 @@ spec = around withConnection $
 
       let response = Freddy.deliverWithResponse connection (buildRequest queueName)
 
-      response `shouldReturn` (Left . Freddy.InvalidRequest $ "AMQP Error")
+      response `shouldReturn` (Left . Freddy.InvalidRequest $ "Publish Error")
 
     it "sends and forgets a message" $ \connection -> do
       queueName <- randomQueueName
