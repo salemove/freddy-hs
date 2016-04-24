@@ -52,7 +52,20 @@ data Consumer = Consumer {
   consumerChannel :: AMQP.Channel
 }
 
-connect :: String -> Text -> Text -> Text -> IO Connection
+{-|
+  Creates a connection with the message queue.
+
+  __Example__:
+
+  @
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+  @
+-}
+connect :: String -- ^ server host
+        -> Text   -- ^ virtual host
+        -> Text   -- ^ user name
+        -> Text   -- ^ password
+        -> IO Connection
 connect host vhost user pass = do
   connection <- AMQP.openConnection host vhost user pass
   produceChannel <- AMQP.openChannel connection
@@ -79,9 +92,41 @@ connect host vhost user pass = do
     eventChannel = eventChannel
   }
 
+{-|
+  Closes the connection with the message queue.
+
+  __Example__:
+
+  @
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+    Freddy.disconnect connection
+  @
+-}
 disconnect :: Connection -> IO ()
 disconnect = AMQP.closeConnection . amqpConnection
 
+{-|
+  Sends a message and waits for the response.
+
+  __Example__:
+
+  @
+    import qualified Network.Freddy as Freddy
+    import qualified Network.Freddy.Request as R
+
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+
+    response <- Freddy.deliverWithResponse connection R.newReq {
+      R.queueName = "echo",
+      R.body = "{\\"msg\\": \\"what did you say?\\"}"
+    }
+
+    case response of
+      Right payload -> putStrLn "Received positive result"
+      Left (Freddy.InvalidRequest payload) -> putStrLn "Received error"
+      Left Freddy.TimeoutError -> putStrLn "Request timed out"
+  @
+-}
 deliverWithResponse :: Connection -> Request.Request -> IO Response
 deliverWithResponse connection request = do
   correlationId <- generateCorrelationId
@@ -121,6 +166,25 @@ createResponse msg = do
         Left . InvalidRequest $ msgBody
     _ -> Left . InvalidRequest $ "No message type"
 
+{-|
+  Send and forget type of delivery. It sends a message to given destination
+  without waiting for a response. This is useful when there are multiple
+  consumers that are using 'tapInto' or you just do not care about the
+  response.
+
+  __Example__:
+
+  @
+    import qualified Network.Freddy as Freddy
+    import qualified Network.Freddy.Request as R
+
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+    Freddy.deliver connection R.newReq {
+      R.queueName = "notifications.user_signed_in",
+      R.body = "{\\"user_id\\": 1}"
+    }
+  @
+-}
 deliver :: Connection -> Request.Request -> IO ()
 deliver connection request = do
   let msg = AMQP.newMsg {
@@ -132,6 +196,19 @@ deliver connection request = do
   AMQP.publishMsg (amqpProduceChannel connection) "" (Request.queueName request) msg
   AMQP.publishMsg (amqpProduceChannel connection) topicExchange (Request.queueName request) msg
 
+{-|
+  Responds to messages on a given destination. It is useful for messages that
+  have to be processed once and then a result must be sent.
+
+  __Example__:
+
+  @
+    processMessage (Freddy.Delivery body replyWith failWith) = replyWith body
+
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+    Freddy.respondTo connection "echo" processMessage
+  @
+-}
 respondTo :: Connection -> QueueName -> (Delivery -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
   let produceChannel = amqpProduceChannel connection
@@ -141,6 +218,19 @@ respondTo connection queueName callback = do
     replyCallback callback produceChannel
   return Consumer { consumerChannel = consumeChannel, consumerTag = tag }
 
+{-|
+  Listens for messages on a given destination or destinations without
+  consuming them.
+
+  __Example__:
+
+  @
+    processMessage body = putStrLn body
+
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+    Freddy.tapInto connection "notifications.*" processMessage
+  @
+-}
 tapInto :: Connection -> QueueName -> (Payload -> IO ()) -> IO Consumer
 tapInto connection queueName callback = do
   consumeChannel <- AMQP.openChannel . amqpConnection $ connection
@@ -153,6 +243,17 @@ tapInto connection queueName callback = do
 
   return Consumer { consumerChannel = consumeChannel, consumerTag = tag }
 
+{-|
+  Stops the consumer from listening new messages.
+
+  __Example__:
+
+  @
+    connection <- Freddy.connect "127.0.0.1" "/" "guest" "guest"
+    consumer <- Freddy.tapInto connection "notifications.*" processMessage
+    threadDelay tenMinutes $ Freddy.cancelConsumer consumer
+  @
+-}
 cancelConsumer :: Consumer -> IO ()
 cancelConsumer consumer = do
   AMQP.cancelConsumer (consumerChannel consumer) $ consumerTag consumer
