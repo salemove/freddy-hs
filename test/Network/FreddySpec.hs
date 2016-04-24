@@ -2,12 +2,14 @@
 module Network.FreddySpec where
 
 import Test.Hspec
+import qualified Data.ByteString.Lazy.Char8 as BS
 import qualified Network.Freddy as Freddy
 import qualified Network.Freddy.Request as R
 import qualified Data.Text as Text
 import SpecHelper (
   randomQueueName,
   echoResponder,
+  errorResponder,
   requestBody,
   withConnection,
   createQueue,
@@ -24,7 +26,7 @@ spec = around withConnection $
       R.body = requestBody
     }
 
-    it "responds to a message" $ \connection -> do
+    it "responds to a message with success" $ \connection -> do
       queueName <- randomQueueName
 
       Freddy.respondTo connection queueName echoResponder
@@ -33,12 +35,21 @@ spec = around withConnection $
 
       response `shouldReturn` Right requestBody
 
+    it "responds to a message with error" $ \connection -> do
+      queueName <- randomQueueName
+
+      Freddy.respondTo connection queueName errorResponder
+
+      let response = Freddy.deliverWithResponse connection (buildRequest queueName)
+
+      response `shouldReturn` (Left . Freddy.InvalidRequest $ requestBody)
+
     it "returns invalid request error when queue does not exist" $ \connection -> do
       queueName <- randomQueueName
 
       let response = Freddy.deliverWithResponse connection (buildRequest queueName)
 
-      response `shouldReturn` Left Freddy.InvalidRequest
+      response `shouldReturn` (Left . Freddy.InvalidRequest $ "AMQP Error")
 
     it "sends and forgets a message" $ \connection -> do
       queueName <- randomQueueName
