@@ -58,6 +58,12 @@ connect host vhost user pass = do
   produceChannel <- AMQP.openChannel connection
   responseChannel <- AMQP.openChannel connection
 
+  AMQP.declareExchange produceChannel AMQP.newExchange {
+    AMQP.exchangeName = topicExchange,
+    AMQP.exchangeType = "topic",
+    AMQP.exchangeDurable = False
+  }
+
   eventChannel <- BC.newBroadcastChan
 
   (responseQueueName, _, _) <- declareQueue responseChannel ""
@@ -140,11 +146,6 @@ tapInto connection queueName callback = do
   consumeChannel <- AMQP.openChannel . amqpConnection $ connection
 
   declareExlusiveQueue consumeChannel queueName
-  AMQP.declareExchange consumeChannel AMQP.newExchange {
-    AMQP.exchangeName = topicExchange,
-    AMQP.exchangeType = "topic",
-    AMQP.exchangeDurable = False
-  }
   AMQP.bindQueue consumeChannel "" topicExchange queueName
 
   let consumer = callback . AMQP.msgBody .fst
