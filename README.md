@@ -1,5 +1,8 @@
 # RabbitMQ Messaging API supporting request-response
 
+[![Build Status](https://travis-ci.org/salemove/freddy-hs.svg?branch=master)](https://travis-ci.org/salemove/freddy-hs)
+[![Code Climate](https://codeclimate.com/github/salemove/freddy-hs/badges/gpa.svg)](https://codeclimate.com/github/salemove/freddy-hs)
+
 ## Setup
 
 * Create a connection:
