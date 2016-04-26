@@ -1,0 +1,27 @@
+sudo: required
+
+env:
+  - CABALVER=1.22 GHCVER=7.10.3
+
+addons:
+  apt:
+    sources:
+      - hvr-ghc
+    packages:
+      - ghc-7.10.3
+      - cabal-install-1.22
+
+services:
+  - rabbitmq
+
+before_install:
+  - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$HOME/.cabal/bin:$PATH
+  - ghc --version
+  - cabal --version
+  - travis_retry cabal update
+
+script:
+  - cabal install --only-dependencies --enable-tests
+  - cabal configure --enable-tests --ghc-options=-Werror
+  - cabal build
+  - cabal test
