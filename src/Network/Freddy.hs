@@ -13,6 +13,7 @@ module Network.Freddy (
   Error (..)
 ) where
 
+import Control.Concurrent (forkIO)
 import qualified Network.AMQP as AMQP
 import Data.Text (Text, pack)
 import Data.ByteString.Lazy.Char8 (ByteString)
@@ -29,8 +30,8 @@ type QueueName = Text
 type ReplyWith = Payload -> IO ()
 type FailWith  = Payload -> IO ()
 
-type ResponseChannelEmitter = BC.BroadcastChan BC.In AMQPResponse
-type ResponseChannelListener = BC.BroadcastChan BC.Out AMQPResponse
+type ResponseChannelEmitter = BC.BroadcastChan BC.In (Maybe AMQP.PublishError, AMQP.Message)
+type ResponseChannelListener = BC.BroadcastChan BC.Out (Maybe AMQP.PublishError, AMQP.Message)
 
 data Error = InvalidRequest Payload | TimeoutError deriving (Show, Eq)
 type Response = Either Error Payload
@@ -38,13 +39,12 @@ type Response = Either Error Payload
 data Delivery = Delivery Payload ReplyWith FailWith
 data Reply = Reply QueueName AMQP.Message
 
-type AMQPResponse = Either AMQP.PublishError AMQP.Message
-
 data Connection = Connection {
   amqpConnection :: AMQP.Connection,
-  amqpChannel :: AMQP.Channel,
+  amqpProduceChannel :: AMQP.Channel,
+  amqpResponseChannel :: AMQP.Channel,
   responseQueueName :: Text,
-  responseChannelListener :: ResponseChannelListener
+  eventChannel :: ResponseChannelEmitter
 }
 
 data Consumer = Consumer {
@@ -55,23 +55,28 @@ data Consumer = Consumer {
 connect :: String -> Text -> Text -> Text -> IO Connection
 connect host vhost user pass = do
   connection <- AMQP.openConnection host vhost user pass
-  channel <- AMQP.openChannel connection
+  produceChannel <- AMQP.openChannel connection
+  responseChannel <- AMQP.openChannel connection
+
+  AMQP.declareExchange produceChannel AMQP.newExchange {
+    AMQP.exchangeName = topicExchange,
+    AMQP.exchangeType = "topic",
+    AMQP.exchangeDurable = False
+  }
 
   eventChannel <- BC.newBroadcastChan
-  responseChannelListener <- BC.newBChanListener eventChannel
 
-  (responseQueueName, _, _) <- AMQP.declareQueue channel AMQP.newQueue {
-    AMQP.queueName = ""
-  }
-  AMQP.consumeMsgs channel responseQueueName AMQP.NoAck $ responseCallback eventChannel
+  (responseQueueName, _, _) <- declareQueue responseChannel ""
+  AMQP.consumeMsgs responseChannel responseQueueName AMQP.NoAck $ responseCallback eventChannel
 
-  AMQP.addReturnListener channel (returnCallback eventChannel)
+  AMQP.addReturnListener produceChannel (returnCallback eventChannel)
 
   return $ Connection {
     amqpConnection = connection,
-    amqpChannel = channel,
+    amqpResponseChannel = responseChannel,
+    amqpProduceChannel = produceChannel,
     responseQueueName = responseQueueName,
-    responseChannelListener = responseChannelListener
+    eventChannel = eventChannel
   }
 
 disconnect :: Connection -> IO ()
@@ -90,15 +95,18 @@ deliverWithResponse connection request = do
     AMQP.msgExpiration    = Request.expirationInMs request
   }
 
-  AMQP.publishMsg' (amqpChannel connection) "" (Request.queueName request) True msg
-  AMQP.publishMsg (amqpChannel connection) topicExchange (Request.queueName request) msg
+  responseChannelListener <- BC.newBChanListener $ eventChannel connection
 
-  amqpResponse <- timeout (Request.timeoutInMicroseconds request) $
-    waitForResponse (responseChannelListener connection) correlationId $ matchingCorrelationId correlationId
+  AMQP.publishMsg' (amqpProduceChannel connection) "" (Request.queueName request) True msg
+  AMQP.publishMsg (amqpProduceChannel connection) topicExchange (Request.queueName request) msg
 
-  case amqpResponse of
-    Just (Right msg) -> return $ createResponse msg
-    Just (Left error) -> return . Left . InvalidRequest $ "AMQP Error"
+  responseBody <- timeout (Request.timeoutInMicroseconds request) $ do
+    let messageMatcher = matchingCorrelationId correlationId
+    waitForResponse responseChannelListener messageMatcher
+
+  case responseBody of
+    Just (Nothing, msg) -> return . createResponse $ msg
+    Just (Just error, _) -> return . Left . InvalidRequest $ "Publish Error"
     Nothing -> return $ Left TimeoutError
 
 createResponse :: AMQP.Message -> Either Error Payload
@@ -121,54 +129,51 @@ deliver connection request = do
     AMQP.msgExpiration   = Request.expirationInMs request
   }
 
-  AMQP.publishMsg (amqpChannel connection) "" (Request.queueName request) msg
-  AMQP.publishMsg (amqpChannel connection) topicExchange (Request.queueName request) msg
+  AMQP.publishMsg (amqpProduceChannel connection) "" (Request.queueName request) msg
+  AMQP.publishMsg (amqpProduceChannel connection) topicExchange (Request.queueName request) msg
 
 respondTo :: Connection -> QueueName -> (Delivery -> IO ()) -> IO Consumer
 respondTo connection queueName callback = do
-  let channel = amqpChannel connection
-  AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
-  tag <- AMQP.consumeMsgs channel queueName AMQP.NoAck (replyCallback callback channel)
-  return Consumer { consumerChannel = channel, consumerTag = tag }
+  let produceChannel = amqpProduceChannel connection
+  consumeChannel <- AMQP.openChannel . amqpConnection $ connection
+  declareQueue consumeChannel queueName
+  tag <- AMQP.consumeMsgs consumeChannel queueName AMQP.NoAck $
+    replyCallback callback produceChannel
+  return Consumer { consumerChannel = consumeChannel, consumerTag = tag }
 
 tapInto :: Connection -> QueueName -> (Payload -> IO ()) -> IO Consumer
 tapInto connection queueName callback = do
-  let channel = amqpChannel connection
+  consumeChannel <- AMQP.openChannel . amqpConnection $ connection
 
-  AMQP.declareQueue channel AMQP.newQueue {
-    AMQP.queueName = queueName,
-    AMQP.queueExclusive = True
-  }
-  AMQP.declareExchange channel AMQP.newExchange {
-    AMQP.exchangeName = topicExchange,
-    AMQP.exchangeType = "topic",
-    AMQP.exchangeDurable = False
-  }
-  AMQP.bindQueue channel "" topicExchange queueName
+  declareExlusiveQueue consumeChannel queueName
+  AMQP.bindQueue consumeChannel "" topicExchange queueName
 
   let consumer = callback . AMQP.msgBody .fst
-  tag <- AMQP.consumeMsgs channel queueName AMQP.NoAck consumer
+  tag <- AMQP.consumeMsgs consumeChannel queueName AMQP.NoAck consumer
 
-  return Consumer { consumerChannel = channel, consumerTag = tag }
+  return Consumer { consumerChannel = consumeChannel, consumerTag = tag }
 
 cancelConsumer :: Consumer -> IO ()
-cancelConsumer consumer =
+cancelConsumer consumer = do
   AMQP.cancelConsumer (consumerChannel consumer) $ consumerTag consumer
+  AMQP.closeChannel (consumerChannel consumer)
 
 returnCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.PublishError) -> IO ()
 returnCallback eventChannel (msg, error) =
-  BC.writeBChan eventChannel (Left error)
+  BC.writeBChan eventChannel (Just error, msg)
 
 responseCallback :: ResponseChannelEmitter -> (AMQP.Message, AMQP.Envelope) -> IO ()
-responseCallback eventChannel (msg, env) =
-  BC.writeBChan eventChannel (Right msg)
+responseCallback eventChannel (msg, _) =
+  BC.writeBChan eventChannel (Nothing, msg)
 
-replyCallback :: (Delivery -> t) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> t
+replyCallback :: (Delivery -> IO ()) -> AMQP.Channel -> (AMQP.Message, AMQP.Envelope) -> IO ()
 replyCallback userCallback channel (msg, env) = do
   let requestBody = AMQP.msgBody msg
   let replyWith = sendReply msg channel ResultType.Success
   let failWith = sendReply msg channel ResultType.Error
-  userCallback $ Delivery requestBody replyWith failWith
+  let delivery = Delivery requestBody replyWith failWith
+  forkIO . userCallback $ delivery
+  return ()
 
 sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> Payload -> IO ()
 sendReply originalMsg channel resType body =
@@ -198,16 +203,22 @@ matchingCorrelationId correlationId msg =
 topicExchange :: Text
 topicExchange = "freddy-topic"
 
-waitForResponse :: ResponseChannelListener -> CorrelationId -> (AMQP.Message -> Bool) -> IO AMQPResponse
-waitForResponse eventChannelListener correlationId predicate = do
-  amqpResponse <- BC.readBChan eventChannelListener
+waitForResponse :: ResponseChannelListener -> (AMQP.Message -> Bool) -> IO (Maybe AMQP.PublishError, AMQP.Message)
+waitForResponse eventChannelListener predicate = do
+  (error, msg) <- BC.readBChan eventChannelListener
 
-  case amqpResponse of
-    Right msg ->
-      if predicate msg then
-        return amqpResponse
-      else
-        waitForResponse eventChannelListener correlationId predicate
-    Left error ->
-      -- TODO: Check routing key. This is needed when having multiple threads.
-      return amqpResponse
+  if predicate msg then
+    return (error, msg)
+  else
+    waitForResponse eventChannelListener predicate
+
+declareQueue :: AMQP.Channel -> QueueName -> IO (Text, Int, Int)
+declareQueue channel queueName =
+  AMQP.declareQueue channel AMQP.newQueue {AMQP.queueName = queueName}
+
+declareExlusiveQueue :: AMQP.Channel -> QueueName -> IO (Text, Int, Int)
+declareExlusiveQueue channel queueName =
+  AMQP.declareQueue channel AMQP.newQueue {
+    AMQP.queueName = queueName,
+    AMQP.queueExclusive = True
+  }
