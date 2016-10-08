@@ -1,5 +1,5 @@
 name:                freddy
-version:             0.1.0.0
+version:             0.1.1.0
 homepage:            https://github.com/salemove/freddy-hs
 license:             MIT
 license-file:        LICENSE
@@ -12,7 +12,11 @@ extra-source-files:  README.md
 synopsis:            RabbitMQ Messaging API supporting request-response
 
 library
-  exposed-modules:   Network.Freddy
+  exposed-modules:
+    Network.Freddy,
+    Network.Freddy.CorrelationIdGenerator,
+    Network.Freddy.Request,
+    Network.Freddy.ResultType
   build-depends:
     base           >= 4.8 && < 5,
     bytestring     >= 0.9,
