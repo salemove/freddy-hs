@@ -195,6 +195,7 @@ deliver connection request = do
 
   AMQP.publishMsg (amqpProduceChannel connection) "" (Request.queueName request) msg
   AMQP.publishMsg (amqpProduceChannel connection) topicExchange (Request.queueName request) msg
+  return ()
 
 {-|
   Responds to messages on a given destination. It is useful for messages that
@@ -279,7 +280,9 @@ replyCallback userCallback channel (msg, env) = do
 sendReply :: AMQP.Message -> AMQP.Channel -> ResultType -> Payload -> IO ()
 sendReply originalMsg channel resType body =
   case buildReply originalMsg resType body of
-    Just (Reply queueName message) -> AMQP.publishMsg channel "" queueName message
+    Just (Reply queueName message) -> do
+      AMQP.publishMsg channel "" queueName message
+      return ()
     Nothing -> putStrLn "Could not reply"
 
 buildReply :: AMQP.Message -> ResultType -> Payload -> Maybe Reply
